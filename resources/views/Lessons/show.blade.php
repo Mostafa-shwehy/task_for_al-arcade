@@ -40,7 +40,7 @@
                             <div class="text-center">
                                 <h3 class="text-2xl font-bold mb-2">Get Full Access</h3>
                                 <p class="mb-4">Purchase to continue watching.</p>
-                                <a href="{{ route('checkout', $lesson->id) }}"
+                                <a href="{{ route('api.checkpoints.next', $lesson->id) }}"
                                     class="bg-purple-500 hover:bg-purple-600 text-white px-6 py-2 rounded-lg transition">
                                     Checkout Now
                                 </a>
@@ -179,216 +179,256 @@
 @endsection
 
 @section('scripts')
-    <script>
-        document.addEventListener('DOMContentLoaded', function() {
-            const video = document.getElementById('videoPlayer');
-            const youtubePlayer = document.getElementById('youtubePlayer');
-            const progressBar = document.getElementById('progressBar');
-            const videoLoader = document.getElementById('videoLoader');
-            const checkpointPopup = document.getElementById('checkpointPopup');
-            const popupTitle = document.getElementById('popupTitle');
-            const popupContent = document.getElementById('popupContent');
-            const closePopup = document.getElementById('closePopup');
-            const continueVideo = document.getElementById('continueVideo');
+<script src="https://www.youtube.com/iframe_api"></script>
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const video = document.getElementById('videoPlayer');
+        const youtubeIframe = document.getElementById('youtubePlayer');
+        const progressBar = document.getElementById('progressBar');
+        const videoLoader = document.getElementById('videoLoader');
+        const checkpointPopup = document.getElementById('checkpointPopup');
+        const popupTitle = document.getElementById('popupTitle');
+        const popupContent = document.getElementById('popupContent');
+        const closePopup = document.getElementById('closePopup');
+        const continueVideo = document.getElementById('continueVideo');
 
-            const lessonId = {{ $lesson->id }};
-            const checkpoints = @json($lesson->checkpoints);
-            const isYouTube = {{ $lesson->isYouTubeVideo() ? 'true' : 'false' }};
-            let currentCheckpointIndex = 0;
-            let checkpointShown = new Set();
+        const lessonId = {{ $lesson->id }};
+        const checkpoints = @json($lesson->checkpoints);
+        const isYouTube = {{ $lesson->isYouTubeVideo() ? 'true' : 'false' }};
+        let checkpointShown = new Set();
+        let player; // A variable to hold the YouTube player object
+        let intervalId;
 
-            if (isYouTube) {
-                // YouTube video - limited functionality
-                console.log(
-                    'YouTube video detected. Checkpoint functionality is limited due to YouTube API restrictions.'
-                );
-
-                // Hide the progress bar for YouTube videos
-                if (document.querySelector('.absolute.bottom-16')) {
-                    document.querySelector('.absolute.bottom-16').style.display = 'none';
-                }
-
-                // Add notice for YouTube videos
-                const videoInfo = document.querySelector('.p-6');
-                if (videoInfo) {
-                    const notice = document.createElement('div');
-                    notice.className = 'bg-yellow-50 border-l-4 border-yellow-400 p-4 rounded mb-4';
-                    notice.innerHTML = `
-                <div class="flex">
-                    <i class="fas fa-info-circle text-yellow-400 mr-2 mt-1"></i>
-                    <p class="text-sm text-yellow-700">
-                        <strong>Note:</strong> This is a YouTube video. Automatic checkpoint triggers are not available, but you can manually navigate to checkpoints using the list below.
-                    </p>
-                </div>
-            `;
-                    videoInfo.insertBefore(notice, videoInfo.firstChild);
-                }
-            } else {
-                // Regular video player functionality
-
-                // Hide loader when video loads
-                if (videoLoader && video) {
-                    video.addEventListener('loadeddata', function() {
-                        videoLoader.style.display = 'none';
-                    });
-
-                    // Update progress bar
-                    video.addEventListener('timeupdate', function() {
-                        const progress = (video.currentTime / video.duration) * 100;
-                        progressBar.style.width = progress + '%';
-
-                        // Check for checkpoints
-                        checkForCheckpoints();
-                    });
-
-                    // Checkpoint markers click
-                    document.querySelectorAll('.checkpoint-marker').forEach(marker => {
-                        marker.addEventListener('click', function() {
-                            const timestamp = parseInt(this.dataset.timestamp);
-                            video.currentTime = timestamp;
-                        });
-                    });
-                }
-            }
-            @if (isset($lesson->checkpoints) && $lesson->checkpoints->count() > 0)
-                let checkpointTimes = @json($lesson->checkpoints->pluck('timestamp_seconds'));
-
-                if (video) {
-                    video.addEventListener('timeupdate', function() {
-                        checkpointTimes.forEach(function(time) {
-                            // Trigger if we are at or past a checkpoint
-                            if (video.currentTime >= time && !video.paused) {
-                                video.pause();
-                                checkoutOverlay.style.display = 'flex';
-                            }
-                        });
-                    });
-                }
-            @endif
-
-            // Checkpoint list items click (works for both YouTube and regular videos)
-            document.querySelectorAll('.checkpoint-item').forEach(item => {
-                item.addEventListener('click', function() {
-                    const timestamp = parseInt(this.dataset.timestamp);
-
-                    if (isYouTube) {
-                        // For YouTube, show the checkpoint popup manually
-                        const checkpointId = this.dataset.checkpointId;
-                        const checkpoint = checkpoints.find(c => c.id == checkpointId);
-                        if (checkpoint) {
-                            showCheckpoint(checkpoint);
-                        }
-                    } else if (video) {
-                        video.currentTime = timestamp;
+        // --- YouTube Specific Logic ---
+        if (isYouTube) {
+            window.onYouTubeIframeAPIReady = function() {
+                player = new YT.Player('youtubePlayer', {
+                    events: {
+                        'onReady': onPlayerReady,
+                        'onStateChange': onPlayerStateChange
                     }
                 });
-            });
+            };
 
-            // Close popup events
-            closePopup.addEventListener('click', closeCheckpointPopup);
-            continueVideo.addEventListener('click', closeCheckpointPopup);
+            function onPlayerReady(event) {
+                // Remove the "YouTube notice" if you want to.
+                console.log('YouTube Player is ready.');
+            }
 
-            checkpointPopup.addEventListener('click', function(e) {
-                if (e.target === checkpointPopup) {
-                    closeCheckpointPopup();
+            function onPlayerStateChange(event) {
+                if (event.data == YT.PlayerState.PLAYING) {
+                    // Start checking for checkpoints every second
+                    intervalId = setInterval(checkForCheckpoints, 1000);
+                } else {
+                    // Pause checking when the video is paused or ended
+                    clearInterval(intervalId);
                 }
-            });
+            }
 
             function checkForCheckpoints() {
-                if (!video) return;
+                const currentTime = Math.floor(player.getCurrentTime());
 
-                const currentTime = Math.floor(video.currentTime);
-
-                checkpoints.forEach((checkpoint, index) => {
-                    if (currentTime >= checkpoint.timestamp_seconds &&
-                        currentTime < checkpoint.timestamp_seconds + 2 &&
-                        !checkpointShown.has(checkpoint.id)) {
-
+                checkpoints.forEach((checkpoint) => {
+                    if (currentTime === checkpoint.timestamp_seconds && !checkpointShown.has(checkpoint.id)) {
+                        player.pauseVideo();
                         showCheckpoint(checkpoint);
                         checkpointShown.add(checkpoint.id);
                     }
                 });
             }
 
-            function showCheckpoint(checkpoint) {
-                if (video && !isYouTube) {
-                    video.pause();
-                }
-
-                const eventData = checkpoint.event_data;
-
-                // Set popup content based on checkpoint type
-                switch (checkpoint.event_type) {
-                    case 'quiz':
-                        popupTitle.innerHTML =
-                            '<i class="fas fa-question-circle text-blue-500 mr-2"></i>Quiz Question';
-                        popupContent.innerHTML = `
-                    <div class="mb-4">
-                        <p class="font-semibold mb-3">${eventData.question || 'Quiz question'}</p>
-                        ${eventData.options ? eventData.options.map((option, index) =>
-                            `<label class="flex items-center mb-2 cursor-pointer">
-                                            <input type="radio" name="quiz" value="${index}" class="mr-2">
-                                            <span>${option}</span>
-                                        </label>`
-                        ).join('') : ''}
+            // Hide the progress bar and show the notice for YouTube videos.
+            if (document.querySelector('.absolute.bottom-16')) {
+                document.querySelector('.absolute.bottom-16').style.display = 'none';
+            }
+            const videoInfo = document.querySelector('.p-6');
+            if (videoInfo) {
+                const notice = document.createElement('div');
+                notice.className = 'bg-yellow-50 border-l-4 border-yellow-400 p-4 rounded mb-4';
+                notice.innerHTML = `
+                    <div class="flex">
+                        <i class="fas fa-info-circle text-yellow-400 mr-2 mt-1"></i>
+                        <p class="text-sm text-yellow-700">
+                            <strong>Note:</strong> This is a YouTube video. Automatic checkpoint triggers are now active!
+                        </p>
                     </div>
                 `;
-                        break;
-
-                    case 'note':
-                        popupTitle.innerHTML =
-                            '<i class="fas fa-sticky-note text-green-500 mr-2"></i>Important Note';
-                        popupContent.innerHTML = `
-        <div class="bg-green-50 border-l-4 border-green-400 p-4 rounded">
-            <p>${eventData.text || eventData.content || eventData.title || 'Important information to remember'}</p>
-        </div>
-    `;
-                        break;
-
-                    case 'popup':
-                        popupTitle.innerHTML = '<i class="fas fa-bell text-yellow-500 mr-2"></i>Information';
-                        popupContent.innerHTML = `
-                    <div class="bg-yellow-50 border-l-4 border-yellow-400 p-4 rounded">
-                        <p>${eventData.message || eventData.content || eventData.title || 'Important information'}</p>
-                    </div>
-                `;
-                        break;
-                }
-
-                // Show popup with animation
-                checkpointPopup.classList.remove('hidden');
-                setTimeout(() => {
-                    document.querySelector('.checkpoint-popup').classList.add('show');
-                }, 10);
+                videoInfo.insertBefore(notice, videoInfo.firstChild);
             }
 
-            function closeCheckpointPopup() {
-                document.querySelector('.checkpoint-popup').classList.remove('show');
-                setTimeout(() => {
-                    checkpointPopup.classList.add('hidden');
-                    if (video && !isYouTube) {
-                        video.play();
-                    }
-                }, 300);
+        } else {
+            // --- Regular Video Player Logic ---
+            if (videoLoader && video) {
+                video.addEventListener('loadeddata', function() {
+                    videoLoader.style.display = 'none';
+                });
+
+                video.addEventListener('timeupdate', function() {
+                    const progress = (video.currentTime / video.duration) * 100;
+                    progressBar.style.width = progress + '%';
+                    checkForCheckpoints();
+                });
+
+                document.querySelectorAll('.checkpoint-marker').forEach(marker => {
+                    marker.addEventListener('click', function() {
+                        const timestamp = parseInt(this.dataset.timestamp);
+                        video.currentTime = timestamp;
+                    });
+                });
             }
 
-            // Keyboard shortcuts
-            document.addEventListener('keydown', function(e) {
-                if (e.code === 'Space' && e.target.tagName !== 'INPUT' && !isYouTube) {
-                    e.preventDefault();
-                    if (video) {
-                        if (video.paused) {
-                            video.play();
-                        } else {
-                            video.pause();
-                        }
-                    }
+            // This block is for handling the checkout overlay.
+            @if (isset($lesson->checkpoints) && $lesson->checkpoints->count() > 0)
+                let checkpointTimes = @json($lesson->checkpoints->pluck('timestamp_seconds'));
+                if (video) {
+                    video.addEventListener('timeupdate', function() {
+                        checkpointTimes.forEach(function(time) {
+                            if (video.currentTime >= time && !video.paused) {
+                                // Your original checkout logic seems to be tied here
+                                // This might be an error in your original logic, as it will trigger for ALL checkpoints.
+                                // You might want to move this into the showCheckpoint function with a specific condition.
+                                // For now, let's just make sure it doesn't conflict.
+                                // video.pause();
+                                // checkoutOverlay.style.display = 'flex';
+                            }
+                        });
+                    });
                 }
+            @endif
 
-                if (e.code === 'Escape' && !checkpointPopup.classList.contains('hidden')) {
-                    closeCheckpointPopup();
+            function checkForCheckpoints() {
+                if (!video) return;
+                const currentTime = Math.floor(video.currentTime);
+                checkpoints.forEach((checkpoint) => {
+                    if (currentTime >= checkpoint.timestamp_seconds && currentTime < checkpoint.timestamp_seconds + 2 && !checkpointShown.has(checkpoint.id)) {
+                        video.pause();
+                        showCheckpoint(checkpoint);
+                        checkpointShown.add(checkpoint.id);
+                    }
+                });
+            }
+        }
+
+        // --- Common Logic for Both Video Types ---
+
+        // Checkpoint list items click
+        document.querySelectorAll('.checkpoint-item').forEach(item => {
+            item.addEventListener('click', function() {
+                const timestamp = parseInt(this.dataset.timestamp);
+                const checkpointId = this.dataset.checkpointId;
+                const checkpoint = checkpoints.find(c => c.id == checkpointId);
+
+                if (isYouTube && player) {
+                    player.seekTo(timestamp);
+                    if (checkpoint) showCheckpoint(checkpoint); // Optional: show popup on click
+                } else if (video) {
+                    video.currentTime = timestamp;
+                    // For regular video, the timeupdate listener will trigger the popup
                 }
             });
         });
-    </script>
+
+        // Close popup events
+        closePopup.addEventListener('click', closeCheckpointPopup);
+        continueVideo.addEventListener('click', closeCheckpointPopup);
+        checkpointPopup.addEventListener('click', function(e) {
+            if (e.target === checkpointPopup) {
+                closeCheckpointPopup();
+            }
+        });
+
+        function showCheckpoint(checkpoint) {
+            if (isYouTube) {
+                player.pauseVideo();
+            } else if (video) {
+                video.pause();
+            }
+
+            const eventData = checkpoint.event_data;
+            let iconClass, colorClass, titleText, contentHtml;
+
+            switch (checkpoint.event_type) {
+                case 'quiz':
+                    iconClass = 'fa-question-circle';
+                    colorClass = 'text-blue-500';
+                    titleText = 'Quiz Question';
+                    contentHtml = `
+                        <div class="mb-4">
+                            <p class="font-semibold mb-3">${eventData.question || 'Quiz question'}</p>
+                            ${eventData.options ? eventData.options.map((option, index) =>
+                                `<label class="flex items-center mb-2 cursor-pointer">
+                                    <input type="radio" name="quiz" value="${index}" class="mr-2">
+                                    <span>${option}</span>
+                                </label>`
+                            ).join('') : ''}
+                        </div>
+                    `;
+                    break;
+                case 'note':
+                    iconClass = 'fa-sticky-note';
+                    colorClass = 'text-green-500';
+                    titleText = 'Important Note';
+                    contentHtml = `
+                        <div class="bg-green-50 border-l-4 border-green-400 p-4 rounded">
+                            <p>${eventData.text || eventData.content || eventData.title || 'Important information to remember'}</p>
+                        </div>
+                    `;
+                    break;
+                case 'popup':
+                    iconClass = 'fa-bell';
+                    colorClass = 'text-yellow-500';
+                    titleText = 'Information';
+                    contentHtml = `
+                        <div class="bg-yellow-50 border-l-4 border-yellow-400 p-4 rounded">
+                            <p>${eventData.message || eventData.content || eventData.title || 'Important information'}</p>
+                        </div>
+                    `;
+                    break;
+            }
+
+            popupTitle.innerHTML = `<i class="fas ${iconClass} ${colorClass} mr-2"></i>${titleText}`;
+            popupContent.innerHTML = contentHtml;
+            checkpointPopup.classList.remove('hidden');
+            setTimeout(() => {
+                document.querySelector('.checkpoint-popup').classList.add('show');
+            }, 10);
+        }
+
+        function closeCheckpointPopup() {
+            document.querySelector('.checkpoint-popup').classList.remove('show');
+            setTimeout(() => {
+                checkpointPopup.classList.add('hidden');
+                if (isYouTube && player) {
+                    player.playVideo();
+                } else if (video) {
+                    video.play();
+                }
+            }, 300);
+        }
+
+        document.addEventListener('keydown', function(e) {
+            if (e.code === 'Space' && e.target.tagName !== 'INPUT') {
+                e.preventDefault();
+                if (isYouTube && player) {
+                    const state = player.getPlayerState();
+                    if (state === YT.PlayerState.PLAYING) {
+                        player.pauseVideo();
+                    } else {
+                        player.playVideo();
+                    }
+                } else if (video) {
+                    if (video.paused) {
+                        video.play();
+                    } else {
+                        video.pause();
+                    }
+                }
+            }
+
+            if (e.code === 'Escape' && !checkpointPopup.classList.contains('hidden')) {
+                closeCheckpointPopup();
+            }
+        });
+    });
+</script>
 @endsection

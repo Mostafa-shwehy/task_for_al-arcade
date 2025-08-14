@@ -17,9 +17,9 @@ class VideoLessonSeeder extends Seeder
         foreach ($videos as $videoData) {
             $video = VideoLesson::create($videoData);
             $video->checkpoints()->createMany([
-                ['timestamp_seconds' => 50, 'event_type' => 'note', 'event_data' => ['text' => 'Intro']],
-                ['timestamp_seconds' => 150, 'event_type' => 'quiz', 'event_data' => ['question' => 'Install Xampp?']],
-                ['timestamp_seconds' => 250, 'event_type' => 'popup', 'event_data' => ['text' => 'Install Composer']]
+                ['timestamp_seconds' => 10, 'event_type' => 'note', 'event_data' => ['text' => 'Intro']],
+                ['timestamp_seconds' => 20, 'event_type' => 'quiz', 'event_data' => ['question' => 'Install Xampp?']],
+                ['timestamp_seconds' => 30, 'event_type' => 'popup', 'event_data' => ['message' => 'Install Composer']]
             ]);
         }
     }
