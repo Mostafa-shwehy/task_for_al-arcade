@@ -40,7 +40,7 @@
                             <div class="text-center">
                                 <h3 class="text-2xl font-bold mb-2">Get Full Access</h3>
                                 <p class="mb-4">Purchase to continue watching.</p>
-                                <a href="{{ route('api.checkpoints.next', $lesson->id) }}"
+                                <a href="{{ route('checkpoints.next', $lesson->id) }}"
                                     class="bg-purple-500 hover:bg-purple-600 text-white px-6 py-2 rounded-lg transition">
                                     Checkout Now
                                 </a>
